@@ -1,0 +1,7 @@
+ &FileInfo
+  path1='./'
+  path2='../../run_titanintel_cpu_ompno/CPU_BASELINE/'
+  CutoffFactor=.0
+/
+
+
