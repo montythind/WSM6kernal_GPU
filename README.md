@@ -1,4 +1,5 @@
-# 
+# README
+
 This is the WSM6 Stand-Alone Kernel 
 
 Here is a brief recipe for running the stand-alone WSM6 kernel on endeavor.  
