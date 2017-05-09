@@ -1,0 +1,41 @@
+BUILD_DEFINES = -DHIDE_LONGLINES -DPGIOPENACC
+CPP       = /lib/cpp
+CPP_FLAGS += -traditional -P $(BUILD_DEFINES) -DINLINE
+FCserial  = pgf90
+
+
+# TBD: build pgi version of GPTL
+USE_GPTL = yes
+ifeq ($(USE_GPTL),yes)
+  ifeq ($(PAR),parallel)
+    GPTLINCLUDE = -I/contrib/gptl/gptl-v5.5_mvapich2_pgi/include
+    GPTLLIB     = -L/contrib/gptl/gptl-v5.5_mvapich2_pgi/lib -lgptl
+  else
+    GPTLINCLUDE = -I/contrib/gptl/gptl-v5.5_nompi_noomp_pgi/include
+    GPTLLIB     = -L/contrib/gptl/gptl-v5.5_nompi_noomp_pgi/lib -lgptl
+  endif
+  CPP_FLAGS += -DGPTL $(GPTLINCLUDE)
+endif
+
+ACCFLAGS = -acc -Minline=reshape -ta=nvidia,keepgpu,nofma,cuda8.0 -v -Minfo=accel 
+ifeq ($(HW),gpu)
+  PHYS_ACCFLAGS = $(ACCFLAGS)
+endif
+
+# Fortran flags for various subdirs. If DEBUG=yes, set for debugging
+DEBUG = no
+ifeq ($(DEBUG),yes)
+  PHYSFLAGS = -g -O0 $(DEFINES) $(BUILD_DEFINES) $(PHYS_ACCFLAGS) -I ../include
+else
+  PHYSFLAGS = -V -g -O0 $(DEFINES) $(BUILD_DEFINES) $(PHYS_ACCFLAGS) -I ../include 
+endif
+DIFF_FLAGS = -g -O3 $(DEFINES) $(BUILD_DEFINES)
+
+# Implicit real*8 flag needed in physics
+R8FLAG = -r8 -I../include
+
+# Flag to enable OpenMP ("makenim" automatically sets this to yes or no)
+ifeq ($(OPENMP),yes)
+OMPFLAG = -mp
+endif
+

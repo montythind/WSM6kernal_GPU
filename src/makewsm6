@@ -1,0 +1,524 @@
+#!/bin/csh
+
+# This script builds the WSM6 stand-alone kernel.
+#
+### Apologies for use of csh, this was inherited. ###
+#
+# Usage: Execute this script with the "-help" option.  
+#
+# With arguments, checks validity of settings and sets arch and 
+# buildroot.  It then writes a file to be sourced (module_setup), and runs 
+# make. Current  defaults are: 
+#    arch=intel threading=no nz=41
+#    buildroot=..
+#
+# "makewsm6 clean" removes any src_* directories (created by earlier 
+# invocations of "makewsm6") in the parent directory.  It is not supported in 
+# combination with a "buildroot" argument. 
+
+set validarch = (intel lahey pgi zeusintel zeuslahey sjetintel titanintel titanpgi titancray tacc taccxeonphi ysintel m1intel m1xeonphi m2intel m2xeonphi eosintel endeavorintel endeavorhswep endeavorxeonphi fgepgi)
+set validhw = (cpu gpu)
+set validthreading = (yes no)
+set validnz = (no)      # or a non-negative integer, "0"=="no"
+set thisscript = $0
+set srcdir = $cwd
+
+# Set messages to be printed on request or given bad input
+set usemsg = "Usage: $thisscript [clean] [-*help] [arch=?] [hw=?] [threading=?] [nz=?] [buildroot=dir]"
+set usemsg_clean     = "clean means blow away all builds"
+set usemsg_help      = "help or -help or --help prints a verbose use message"
+set usemsg_arch      = "arch=[one of: $validarch]"
+set usemsg_hw        = "hw=[one of:  $validhw]"
+set usemsg_threading = "threading=[one of: $validthreading]"
+set usemsg_nz        = "nz=[one of: $validnz or a non-negative integer] "
+set usemsg_buildroot = "buildroot=[dir_to_build (default is $cwd:h)]"
+
+# makewsm6 must be run from the src directory
+if ($cwd:t != src || ! -d kernel ) then
+  echo "${thisscript}: MUST be run from NIM src directory! $srcdir looks suspicious"
+  exit 1
+endif
+
+# Special cases of "makewsm6 clean" and "makewsm6 -*help"
+if ($#argv == 1) then
+  if ($argv[1] == "clean") then
+    set cmd = 'rm -rf ../src_*'
+    echo "Executing $cmd..."
+    $cmd
+    exit 0
+  else if ($argv[1] == "-help" || $argv[1] == "--help" || $argv[1] == "help") then
+    echo "Usage: $usemsg"
+    echo '      ' $usemsg_clean
+    echo '      ' $usemsg_help
+    echo '      ' $usemsg_arch
+    echo '      ' $usemsg_hw
+    echo '      ' $usemsg_threading
+    echo '      ' $usemsg_nz
+    echo '      ' $usemsg_buildroot
+    exit 0
+  endif
+endif
+
+# Parse arg list for presence of key=value pairs. 
+# Of course csh does not have getopt.  
+
+while ($#argv)
+# Throw away what comes after "=" to get the key
+  set key = `echo $1 | sed 's/=.*$//'`
+# Throw away what comes before "=" to get the value
+  set val = `echo $1 | sed 's/.*=//'`
+  if ($key == "" || $val == "") then
+    echo "Cannot parse arg list: For help run: $thisscript -help"
+    exit 1
+  endif
+  if ($key != "arch" && $key != "hw" && $key != "buildroot" && $key != "threading" && $key != "nz" ) then
+    echo "key=value not found or LHS of = must be one of arch|hw|buildroot|threading|nz"
+    echo "For help run: $thisscript -help"
+    exit 1
+  endif
+
+# Check validity of input. csh lack of functions is beyond ridiculous.  
+  if ($key == "arch") then
+    set validopts = ($validarch)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown arch: Need arch=[one of: $validarch]"
+      exit 1
+    endif
+  else if ($key == "hw") then
+    set validopts = ($validhw)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown hw: Need hw=[one of: $validhw]"
+      exit 1
+    endif
+  else if ($key == "threading") then
+    set validopts = ($validthreading)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      echo "$val is an unknown threading: Need threading=[one of: $validthreading]"
+      exit 1
+    endif
+  else if ($key == "nz") then
+    set validopts = ($validnz)
+    while ($#validopts)
+      if ($val == $validopts[1]) then
+        break
+      endif
+      shift validopts
+    end
+    if ($#validopts == 0) then
+      # Is $val a valid positive non-octal integer?  
+      echo $val | egrep '^[1-9]+[0-9]*$' > /dev/null
+      if ( $status ) then
+        echo "$val is an unknown nz: Need nz=[one of: $validnz] or a positive non-octal integer"
+        exit 1
+      endif
+    endif
+  else if ($key == "buildroot") then
+    if (! -d $val) then
+      echo "$val is not a directory: Need buildroot=[valid_directory]"
+      exit 1
+    endif
+  endif
+  eval "set $key = $val"
+  shift argv
+end
+
+# Determine architecture if not set on cmd line. 
+if ( ! $?arch ) then
+  echo "You must set arch=[one of: $validarch]"
+  echo "For help run: $thisscript -help"
+  exit 1
+endif
+echo "Using arch = $arch"
+echo ""
+
+# Determine hardware.  Use default if not specified on command-line.  
+if ( ! $?hw ) then
+  set hw = $validhw[1]
+endif
+
+# threading is 'no' if hw=gpu
+if ($hw == gpu) then
+  set threading = 'no'
+endif
+# Determine threading if not set on cmd line
+if ( ! $?threading ) then
+    echo "You must set threading=[one of: $validthreading]"
+    echo "For help run: $thisscript -help"
+    exit 1
+  endif
+endif
+echo "Using threading = $threading"
+echo ""
+
+# Determine build root.  Use default if not specified on command-line.  
+if ( ! $?buildroot) then
+  set buildroot = `cd .. && echo $cwd`
+endif
+
+# Determine nz.  Use default if not specified on command-line.  
+if ( ! $?nz ) then
+  set nz = $validnz[1]
+endif
+
+# Set objdir (where "make" is run) and rundir (where run scripts are put) 
+# based on $arch and $buildroot. 
+
+if ($nz == 'no') then
+  set nztype = ""
+else
+  set nztype = "_NZ${nz}"
+endif
+
+set buildname = ${arch}_${hw}_omp${threading}${nztype}
+set objbase = src_${buildname}
+set objdir = ${buildroot}/${objbase}
+set runbase = run_${buildname}
+set rundir = ${buildroot}/${runbase}
+
+echo 'objdir = ' ${objdir}
+echo 'rundir = ' ${rundir}
+
+if ( ! -d $objdir) then
+  mkdir -p $objdir || echo "Failure from mkdir -p $objdir" && exit 1
+endif
+
+echo "Using buildroot = ${buildroot}. 'make' will be run in ${objdir}"
+echo ""
+
+# Create a script which can build NIM directly from the build directory
+cat >! ${objdir}/makewsm6_fromobj <<EOF
+#!/bin/csh
+source ./module_setup || echo "Failure to source ./module_setup"
+make
+exit 0
+EOF
+chmod 755 ${objdir}/makewsm6_fromobj
+
+if ( ! -d $rundir) then
+  mkdir $rundir || echo "Failure from mkdir $rundir" && exit 1
+endif
+
+# Make objdir a full path, and rsync the source tree
+set curdir = $cwd
+cd $objdir
+set objdir = $cwd
+
+cd ${curdir}/.. || echo "Failure to cd ${curdir}/.." && exit 1
+
+# -C says to ignore CVS stuff, which also means .svn/ dirs
+set cmd = "rsync -auC src/ $objdir"
+echo "Issuing cmd: $cmd ..."
+time $cmd || echo "rsync 1 failure" && exit 1
+echo "Done"
+
+# MWG: rsync diffstats for GPU comparisons
+set cmd = "rsync -auC diffstats $objdir"
+echo "Issuing cmd: $cmd ..."
+time $cmd || echo "rsync diffstats failure" && exit 1
+echo "Done"
+
+# Don't want "makewsm6" to exist in objdir--use makewsm6_fromobj instead
+\rm -f ${objdir}/makewsm6
+
+set cmd = "rsync -au run/ $rundir"
+echo "Issuing cmd: $cmd ..."
+time $cmd || echo "rsync 2 failure" && exit 1
+echo "Done"
+
+cd $objdir || echo "Failure to cd $objdir" && exit 1
+
+# Create macros.make based on these settings and the appropriate macros.make.* file
+if ( ! -e macros.make.${arch} ) then
+  echo "${thisscript}: macros.make.${arch} does not exist"
+  exit 1
+endif
+
+echo "# Beginning of script-generated settings" >! macros.make
+echo "ARCH      = $arch"      >> macros.make
+echo "HW        = $hw"        >> macros.make
+echo "OPENMP    = $threading" >> macros.make
+echo "NZ        = $nz"        >> macros.make
+echo "DEFINES   = "           >> macros.make
+echo "CPP_FLAGS = "           >> macros.make
+echo ""                       >> macros.make
+
+# Append the appropriate already-existing macros.make.* file
+echo "# Beginning of macros.make.${arch}" >> macros.make
+cat macros.make.${arch} >> macros.make
+echo "# End of macros.make.${arch}" >> macros.make
+echo ""                       >> macros.make
+
+# Append macros.make.all
+echo "# Beginning of macros.make.all" >> macros.make
+cat macros.make.all >> macros.make
+echo "# End of macros.make.all" >> macros.make
+echo ""                       >> macros.make
+
+# Done creating macros.make
+# Now create module_setup: arch and objdir settings are needed in batch environment
+# even when "modules" aren't available
+
+\rm -f module_setup
+
+cat >! module_setup <<EOF
+#!/bin/csh
+set arch = $arch
+set hw = $hw
+set threading = $threading
+set nz = $nz
+set objdir = $objdir
+EOF
+
+# Module settings: 1st ones are for jet.
+switch ($arch)
+  case 'intel':
+  cat >> module_setup <<EOF
+  module purge
+  module load intel/14.0.3
+  module load cuda/5.0
+EOF
+  breaksw
+  case 'lahey':
+  cat >> module_setup <<EOF
+  module purge
+  module load lahey/8.10b
+EOF
+  breaksw
+  case 'pgi':
+  cat >> module_setup <<EOF
+  module purge
+  module load pgi/12.5-0
+EOF
+  breaksw
+
+  case 'titanintel':
+  cat >> module_setup <<EOF
+  (module list) |& grep -q PrgEnv-cray && module switch PrgEnv-cray PrgEnv-intel
+  (module list) |& grep -q PrgEnv-pgi  && module switch PrgEnv-pgi PrgEnv-intel
+  module load cudatoolkit
+EOF
+  breaksw
+
+  case 'titanpgi':
+  cat >> module_setup <<EOF
+#  module switch pgi/14.2.0 pgi/14.7.0
+  module switch pgi/14.2.0 pgi/14.10.home
+  module load cudatoolkit
+  set mpif90 = "ftn"
+EOF
+  breaksw
+
+  case 'titancray':
+  cat >> module_setup <<EOF
+  (module list) |& grep -q PrgEnv-pgi  && module switch PrgEnv-pgi PrgEnv-cray
+  module switch cce/8.2.5 cce/8.3.4
+  module load craype-accel-nvidia35
+  module unload libsci_acc
+  module load cudatoolkit
+  module load gcc
+EOF
+  breaksw
+
+  case 'eosintel':
+  cat >> module_setup <<EOF
+# ASSUME PrgEnv-intel is loaded (that is the default on eos)
+EOF
+  breaksw
+
+  # do not load modules on m1
+  case 'm1intel':
+  cat >> module_setup <<EOF
+  # Enable Intel-based MIC cmds
+  set path = ( /opt/intel/impi/4.1.1.036/intel64/bin $path /opt/intel/bin )
+EOF
+  breaksw
+
+  # do not load modules on m2
+  case 'm2intel':
+  cat >> module_setup <<EOF
+  # Enable Intel-based MIC cmds
+  set path = ( /opt/intel/impi/4.1.1.036/intel64/bin $path /opt/intel/bin )
+EOF
+  breaksw
+
+  # do not load modules on m1
+  case 'm1xeonphi':
+  cat >> module_setup <<EOF
+  # Enable Intel-based MIC cmds
+  set path = ( /opt/intel/impi/4.1.1/mic/bin $path /opt/intel/mic/bin )
+EOF
+  breaksw
+
+  # do not load modules on m2
+  case 'm2xeonphi':
+  cat >> module_setup <<EOF
+  # Enable Intel-based MIC cmds
+  set path = ( /opt/intel/impi/4.1.1/mic/bin $path /opt/intel/mic/bin )
+EOF
+  breaksw
+
+  # do not purge on yellowstone
+  # ifort 13+ works best with Intel Inspector per Dan Nagle
+  case 'ysintel':
+  cat >> module_setup <<EOF
+  module switch intel intel/13.1.2
+EOF
+  breaksw
+
+  case 'zeusintel':
+  cat >> module_setup <<EOF
+  module purge
+  module load intel/13.0.079
+EOF
+  breaksw
+
+  case 'zeuslahey':
+  cat >> module_setup <<EOF
+  module purge
+  module load lahey/8.1.2b
+EOF
+  breaksw
+
+  # ifort-12.1 (sjet default)
+  case 'sjetintel':
+  cat >> module_setup <<EOF
+  module purge
+  module load intel/14.0.3
+EOF
+  breaksw
+
+  # tacc host: 
+  case 'tacc':
+  cat >> module_setup <<EOF
+EOF
+  breaksw
+
+  # tacc xeonphi: 
+  case 'taccxeonphi':
+  cat >> module_setup <<EOF
+EOF
+  breaksw
+
+  # Endeavor: no modules
+  case 'endeavorintel':
+  cat >> module_setup <<EOF
+  source ${objdir}/endeavor/sourceMe.csh
+EOF
+  breaksw
+
+  # Endeavor: no modules
+  case 'endeavorhswep':
+  cat >> module_setup <<EOF
+  source ${objdir}/endeavor/sourceMe.csh
+EOF
+  breaksw
+
+  # Endeavor: no modules
+  case 'endeavorxeonphi':
+  cat >> module_setup <<EOF
+  source ${objdir}/endeavor/sourceMe.csh MIC
+EOF
+  breaksw
+
+  # NOAA FGE pgi:
+  case 'fgepgi':
+  cat >> module_setup <<EOF
+  module purge
+  module load pgi/16.9
+  module load cuda/8.0
+EOF
+  breaksw
+
+# If we get here, there is a bug in the script. Probably a new "arch" entry is needed.
+  default:
+  echo "${thisscript}: arch=$arch is unknown" && exit 1
+endsw
+
+# Done creating module_setup
+
+if ($threading == 'yes') then
+  if ($arch == 'lahey' || $arch == 'zeuslahey') then
+    echo "ERROR: OpenMP not supported with the Lahey compiler."
+    exit 1
+  endif
+endif
+
+# This file need to remain as is--do not edit
+chmod 444 module_setup
+
+# Copy module_setup to $rundir so jetsub will know module settings and $objdir
+/bin/cp -f module_setup $rundir || echo "failure to copy module_setup" && exit 1
+
+# Source module_setup and run make
+
+cd $objdir || echo "Failure to cd $objdir" && exit 1
+echo "Sourcing module_setup..."
+source ./module_setup
+echo "Done"
+
+echo "Starting make ..."
+env BINDIR="$objdir/bin" make all || echo "make failure" && exit 1
+echo "make succeeded" 
+
+echo ""
+echo "Run scripts are in:"
+echo "  $rundir"
+
+# link binaries to run directory
+# use relative paths to allow relocation of entire working copy
+set curdir = $cwd
+cd ${rundir} || echo "Failure to cd to ${rundir}" && exit 1
+ln -sf ../${objbase}/bin/* . || echo "Failure to link binaries in ../${objbase}/bin to ${rundir}" && exit 1
+cd ${curdir} || echo "Failure to cd ${curdir}" && exit 1
+
+# print message about likely run script for chosen $arch
+echo "Run script is:"
+echo -n "  "
+if ($arch == 'intel' || $arch == 'lahey' || $arch == 'pgi' ) then
+  echo "jetsub"
+else if ($arch == 'sjetintel') then
+  echo "sjetsub"
+else if ($arch == 'm1intel' || $arch == 'm2intel') then
+  echo "m1m2sub.host"
+else if ($arch == 'm1xeonphi' || $arch == 'm2xeonphi') then
+  echo "m1m2sub.mic.serial"
+else if ($arch == 'endeavorintel' || $arch == 'endeavorhswep') then
+  echo "endeavorsub.host.serial"
+else if ($arch == 'endeavorxeonphi') then
+  echo "endeavorsub.mic.serial"
+else if ($arch == 'ysintel') then
+  echo "yssub"
+else if ($arch == 'zeusintel' || $arch == 'zeuslahey') then
+  echo "zeussub"
+else if ($arch == 'titanintel' || $arch == 'titancray' || $arch == 'titanpgi' ) then
+  echo "titansub"
+else if ($arch == 'fgepgi' ) then
+  echo "fgepgi"
+else
+  echo "unknown"
+endif
+
+#echo "To re-execute this build execute: $thisscript arch=$arch hw=$hw threading=$threading nz=$nz buildroot=$buildroot"
+
+exit 0
+
+
+
