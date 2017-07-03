@@ -1,0 +1,44 @@
+#Readme
+
+This repository contains a set of portable transcendental functions.
+
+Compilation:
+
+The file wsm6_kernel.F90 contains the modules (transcendental, mchpow, trig, etc). These modules are in bitrep repo under src and these modules are included in order to use portable transcedental functions rather than inbuilt library functions. In order to compile the entire program, pgi complier is needed. The MAKEFILE in kernel directory has all the command to successfully compile the C++ and Fortran code using pgi compiler. The implemnetaion is written in C++ and contain C_BINDINGS to use it in FORTRAN code. All the definitions of the functions are in portable_math.cpp file. In order to get bitwise reproducible answers, we also need few flags (which are in MAKEFILE after the commnad comipling portable_math.cpp file)
+
+Make
+
+This section descirbes how to compile and execute the results of the program.
+
+go to src directory and follow the instructions below.
+
+> ./makewsm6 clean
+> ./makewsm6 arch=fgepgi hw=cpu threading=no
+ 
+Above command will run the code on CPU, meaning the code will not run using the acc routines.
+
+> ./makewsm6 arch=fgepgi hw=gpu threading=no
+ 
+Note: Above command will run the code on GPU, meaning the code will run using acc routines.
+
+> cd ../run_fgepgi_cpu_ompno
+> ./fgesub
+Note: Using the above command, we can create a basline that will be used to comapre the results. This baseline will be based on CPU version.
+
+> cd RUN*****  
+> cp wsm6_output.dat ../../cpu_baseline
+
+Note: wsm6_output.dat file might take few minutes to build.
+
+> cd ../../run_fgepgi_gpu_ompno
+> ./fgesub
+Note: Using the above command, we can create a basline that will be used to comapre the results. This baseline will be based on GPU version.
+
+> cd RUN****
+Note: wait for wsm6_output.dat file to be created.
+
+> ./diffstat
+
+Note: Using diffstate you can compare the bitwise results of CPU and GPU in a table form.
+
+Currently, the code produces the bitwise reproducible answers.
