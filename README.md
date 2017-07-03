@@ -1,5 +1,6 @@
 # README
 
+
 This is the WSM6 Stand-Alone Kernel 
 
 Here is a brief recipe for running the stand-alone WSM6 kernel on endeavor.  
@@ -91,5 +92,8 @@ WSM62D            1281     0.158 (   12)     0.124 (    0)
     src/kernel/wsm6_kernel.F90 for details.  Note the large difference 
     between the slowest thread of the "WSM62D" timer and the "WSM62D+OpenMP" 
     timer.  This is key mystery we must solve.   
+
+
+
 
 
